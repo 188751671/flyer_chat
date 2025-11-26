@@ -3,33 +3,36 @@ import 'dart:async';
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:hive_ce/hive.dart';
 
+// A class can only extend one parent.
+// But sometimes you want to add behaviors from multiple places.
+// MixIn is a piece of reusable code that a class can “mix in”
+// to get extra methods or properties without extending a new parent class.
 class HiveChatController
     with UploadProgressMixin, ScrollToMessageMixin
     implements ChatController {
-  final _box = Hive.box('chat');
+  final _box = Hive.box('chat'); // 'chat' is like a table name in DB
   final _operationsController = StreamController<ChatOperation>.broadcast();
 
   // Cache for performance - invalidated when data changes
   List<Message>? _cachedMessages;
 
   @override
-  Future<void> insertMessage(
-    Message message, {
-    int? index,
-    bool animated = true,
-  }) async {
+  Future<void> insertMessage(Message message, {int? index, bool animated = true}) async {
     if (_box.containsKey(message.id)) return;
 
     // Index is ignored because Hive does not maintain order
+    // FlyerCore 的Message类 已经写好了 对于各种类型msg的 fromJson 和 toJson 方法
     await _box.put(message.id, message.toJson());
     _invalidateCache();
     _operationsController.add(
+      // insert第二参数是 插入的index, _box.length-1 也就是尾部插入
       ChatOperation.insert(message, _box.length - 1, animated: animated),
     );
   }
 
   @override
   Future<void> removeMessage(Message message, {bool animated = true}) async {
+    // messages 是一个方法名(getter方法) ,返回 排序后的消息列表  List<Message> get messages { ... }
     final sortedMessages = List.from(messages);
     final index = sortedMessages.indexWhere((m) => m.id == message.id);
 
@@ -64,10 +67,7 @@ class HiveChatController
   }
 
   @override
-  Future<void> setMessages(
-    List<Message> messages, {
-    bool animated = true,
-  }) async {
+  Future<void> setMessages(List<Message> messages, {bool animated = true}) async {
     await _box.clear();
     if (messages.isEmpty) {
       _invalidateCache();
@@ -81,9 +81,7 @@ class HiveChatController
             .reduce((acc, map) => {...acc, ...map}),
       );
       _invalidateCache();
-      _operationsController.add(
-        ChatOperation.set(messages, animated: animated),
-      );
+      _operationsController.add(ChatOperation.set(messages, animated: animated));
     }
   }
 
@@ -121,12 +119,11 @@ class HiveChatController
     }
 
     _cachedMessages =
-        _box.values.map((json) => Message.fromJson(_convertMap(json))).toList()
-          ..sort(
-            (a, b) => (a.createdAt?.millisecondsSinceEpoch ?? 0).compareTo(
-              b.createdAt?.millisecondsSinceEpoch ?? 0,
-            ),
-          );
+        _box.values.map((json) => Message.fromJson(_convertMap(json))).toList()..sort(
+          (a, b) => (a.createdAt?.millisecondsSinceEpoch ?? 0).compareTo(
+            b.createdAt?.millisecondsSinceEpoch ?? 0,
+          ),
+        );
 
     return _cachedMessages!;
   }
