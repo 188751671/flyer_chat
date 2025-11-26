@@ -13,8 +13,34 @@ class HiveChatController
   final _box = Hive.box('chat'); // 'chat' is like a table name in DB
   final _operationsController = StreamController<ChatOperation>.broadcast();
 
-  // Cache for performance - invalidated when data changes
+  // messages都是保存在 Hive box, persistence里的. 每次读取msgs时 不可能每次都去 磁盘读取
+  // 所以 每次读取磁盘后  缓存一份在内存里_cachedMessages,下次读取时 优先从这里读
+  // 每当messages数据需要 变更时, 先修改 Hive box里的, 然后更新_cachedMessages
   List<Message>? _cachedMessages;
+
+  /// Invalidates the cached messages list
+  void _invalidateCache() {
+    _cachedMessages = null;
+  }
+
+  @override
+  List<Message> get messages {
+    if (_cachedMessages != null) {
+      return _cachedMessages!;
+    }
+
+    _cachedMessages =
+        _box.values.map((json) => Message.fromJson(_convertMap(json))).toList()..sort(
+          (a, b) => (a.createdAt?.millisecondsSinceEpoch ?? 0).compareTo(
+            b.createdAt?.millisecondsSinceEpoch ?? 0,
+          ),
+        );
+
+    return _cachedMessages!;
+  }
+
+  @override
+  Stream<ChatOperation> get operationsStream => _operationsController.stream;
 
   @override
   Future<void> insertMessage(Message message, {int? index, bool animated = true}) async {
@@ -38,9 +64,11 @@ class HiveChatController
 
     if (index != -1) {
       final messageToRemove = sortedMessages[index];
+      // box里 key是 msg.id, value是 msg.toJson()
       await _box.delete(messageToRemove.id);
       _invalidateCache();
       _operationsController.add(
+        // 而在 ChatOperation stream里, 用index 来删除
         ChatOperation.remove(messageToRemove, index, animated: animated),
       );
     }
@@ -66,13 +94,16 @@ class HiveChatController
     }
   }
 
+  // 用来 设置整个messages list 例如 1.被“一键清空聊天”调用  2.初始化时 可以在聊天记录 开头放入一点 系统tips消息
   @override
   Future<void> setMessages(List<Message> messages, {bool animated = true}) async {
     await _box.clear();
+    // 如果传入的 messages 为空, 直接清空缓存和发出 set 操作
     if (messages.isEmpty) {
       _invalidateCache();
       _operationsController.add(ChatOperation.set([], animated: false));
       return;
+      // 否则 批量插入所有消息
     } else {
       await _box.putAll(
         messages
@@ -106,30 +137,6 @@ class HiveChatController
       ChatOperation.insertAll(messages, originalLength, animated: animated),
     );
   }
-
-  /// Invalidates the cached messages list
-  void _invalidateCache() {
-    _cachedMessages = null;
-  }
-
-  @override
-  List<Message> get messages {
-    if (_cachedMessages != null) {
-      return _cachedMessages!;
-    }
-
-    _cachedMessages =
-        _box.values.map((json) => Message.fromJson(_convertMap(json))).toList()..sort(
-          (a, b) => (a.createdAt?.millisecondsSinceEpoch ?? 0).compareTo(
-            b.createdAt?.millisecondsSinceEpoch ?? 0,
-          ),
-        );
-
-    return _cachedMessages!;
-  }
-
-  @override
-  Stream<ChatOperation> get operationsStream => _operationsController.stream;
 
   @override
   void dispose() {
